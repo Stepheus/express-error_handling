@@ -5,6 +5,9 @@ const express = require('express');              // Express.js web framework
 const bodyParser = require('body-parser');       // Middleware for parsing JSON requests
 const path = require('path');                    // Node.js path module for working with file and directory paths
 
+//Custom errors
+const { ValidationError, InvalidUserError, AuthenticationFailed } = require('./errors/CustomError');
+
 // Creating an instance of the Express application
 const app = express();
 
@@ -35,29 +38,51 @@ app.post('/api/login', async (req, res) => {
     const documents = await Customers.find({ user_name: user_name, password: password });
 
     // If a matching user is found, set the session username and serve the home page
-    if (documents.length > 0) {
+   try {
+        const user = await Customers.findOne({ user_name: user_name });
+        if (!user) {
+            throw new InvalidUserError("No such user in database");
+        }
+        if (user.password !== password) {
+            throw new AuthenticationFailed("Passwords don't match");
+        }
         res.send("User Logged In");
-    } else {
-        res.send("User Information incorrect");
+    } catch (error) {
+        next(error);
     }
 });
 
 // POST endpoint for adding a new customer
 app.post('/api/add_customer', async (req, res) => {
     const data = req.body;
-    console.log(data)
+    console.log(data);
     const documents = await Customers.find({ user_name: data['user_name']});
     if (documents.length > 0) {
         res.send("User already exists");
     }
+
+    const age = parseInt(data['age']);
+    try {
+        if (age < 21) {
+            throw new ValidationError("Customer Under required age limit");
+        }
+ 
+        const customer = new Customers({
+            "user_name": data['user_name'],
+            "age": age,
+            "password": data['password'],
+            "email": data['email']
+        });
+
+        await customer.save();
+ 
+        res.send("Customer added successfully");
+    } catch (error) {
+        next(error);
+    }
+   
     
     // Creating a new instance of the Customers model with data from the request
-    const customer = new Customers({
-        "user_name": data['user_name'],
-        "age": data['age'],
-        "password": data['password'],
-        "email": data['email']
-    });
 
     // Saving the new customer to the MongoDB 'customers' collection
     await customer.save();
@@ -69,6 +94,31 @@ app.post('/api/add_customer', async (req, res) => {
 app.get('/', async (req, res) => {
     res.sendFile(path.join(__dirname, 'frontend', 'home.html'));
 });
+
+app.get('/api/logout', async (req, res) => {
+	res.cookie('username', '', { expires: new Date(0) });
+	res.redirect('/');
+});
+
+app.all("*",(req,res,next)=>{
+	const err = new Error(`Cannot find the URL ${req.originalUrl} in this application. Please check.`);
+	err.status = "Endpoint Failure";
+	err.statusCode = 404;
+	next(err);
+})
+
+
+
+app.use((err,req,res,next) => {
+	err.statusCode = err.statusCode || 500;
+	err.status = err.status || "Error";
+    console.log(err.stack);
+	res.status(err.statusCode).json({
+		status: err.statusCode,
+		message: err.message,
+	});
+})
+
 
 // Starting the server and listening on the specified port
 app.listen(port, () => {
